@@ -2,6 +2,10 @@
 
 A new Flutter Audiochat application.
 
+## Application screenshot
+
+![image](https://raw.githubusercontent.com/verysi/Flutter_audiochat/master/assets/images/Screenrecorder.gif)
+
 ## Getting Started
 
 This project is a starting point for a Flutter application.
