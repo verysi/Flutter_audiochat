@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:intl/intl.dart' show DateFormat;
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:flutter_sound/flutter_sound.dart';
+import 'package:vibrate/vibrate.dart';
 
 void main() {
   runApp(
@@ -41,26 +42,30 @@ class audiodemoState extends State<audiodemo>
   final StreamController<List<dynamic>> _streamController =
       StreamController<List<dynamic>>();
   final FocusNode focusNode = new FocusNode();
-  bool draweroff = true;
   bool audioff = true;
   List<Map> messages = [];
   GlobalKey anchorKey = GlobalKey();
   Offset offset = Offset(0.0, 0.0);
 
+  Animation animationAudio;
+  AnimationController controller;
+
+  bool istapUp = true;
   bool _isRecording = false;
   bool _isPlaying = false;
+  bool _canVibrate = true;
   StreamSubscription _recorderSubscription;
   StreamSubscription _dbPeakSubscription;
   StreamSubscription _playerSubscription;
   FlutterSound flutterSound;
 
   String _recorderTxt = '00:00:00';
-  String _recorderTxt1 = '00:00';
   String _playerTxt = '00:00:00';
   double _dbLevel;
 
   double slider_current_position = 0.0;
   double max_duration = 1.0;
+  int _recordint = 0;
 
   @override
   void initState() {
@@ -71,27 +76,103 @@ class audiodemoState extends State<audiodemo>
     flutterSound.setDbPeakLevelUpdate(0.8);
     flutterSound.setDbLevelEnabled(true);
     initializeDateFormatting();
+    initVibrate();
+
+    controller = new AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 75),
+    );
+//    final Animation curve =
+//        new CurvedAnimation(parent: controller, curve: Curves.fastOutSlowIn);
+
+    animationAudio = new Tween(begin: 0.0, end: 1.0).animate(controller)
+      ..addStatusListener((state) {
+        if (state == AnimationStatus.completed) {
+          controller.stop();
+        }
+      });
   }
 
+  initVibrate() async {
+    bool canVibrate = await Vibrate.canVibrate;
+    setState(() {
+      _canVibrate = canVibrate;
+      _canVibrate
+          ? print("This device can vibrate")
+          : print("This device cannot vibrate");
+    });
+  }
+
+  //发送文字消息
   Future<void> sendText(String content) async {
-    Map send = {
+    Map sendmessage = {
       "content": content,
       "type": -1,
     };
     textEditingController.clear();
-    messages.add(send);
+    messages.add(sendmessage);
     _streamController.sink.add(messages);
   }
 
+  //发送语音消息
   Future<void> sendAudio() async {
-    Map send = {
-      "content": _recorderTxt1,
-      "type": -2,
-    };
-    messages.add(send);
-    _streamController.sink.add(messages);
+    await this.delayStopRecorder(100);
+    if (_recordint == 0) {
+      print('消息太短');
+    } else {
+      Map sendmessage = {
+        "content": _recordint,
+        "type": -2,
+      };
+      messages.add(sendmessage);
+      _streamController.sink.add(messages);
+    }
   }
 
+  //录音时间转成整形
+  int toRecordInt(String RecordText) {
+    int x = 1;
+    if (RecordText.substring(3, 4) == '0') {
+      if (int.parse(RecordText.substring(6, 7)) < 5) {
+        x = int.parse(RecordText.substring(4, 5));
+      } else {
+        x = int.parse(RecordText.substring(4, 5)) + 1;
+      }
+    } else {
+      if (int.parse(RecordText.substring(6, 7)) < 5) {
+        x = int.parse(RecordText.substring(3, 5));
+      } else {
+        x = int.parse(RecordText.substring(3, 5)) + 1;
+      }
+    }
+
+    return x;
+  }
+
+  int _lastClickTime = 0;
+  //语音按键优化,防止用户疯狂点击引发的灾难性bug
+  void ontapdelay() async {
+    int nowTime = new DateTime.now().millisecondsSinceEpoch;
+    int timentervalI = nowTime - _lastClickTime;
+    print('按键时间间隔：$timentervalI');
+    if (_lastClickTime == 0 || nowTime - _lastClickTime > 1000) {
+      setState(() {
+        audioff = false;
+        controller.reset();
+        controller.forward();
+      });
+      _lastClickTime = new DateTime.now().millisecondsSinceEpoch;
+      if (_canVibrate) {
+        Vibrate.feedback(FeedbackType.medium);
+      }
+      if (_isRecording == true) {
+        this.stopRecorder();
+      }
+      this.startRecorder();
+    }
+  }
+
+  //停止录音
   void startRecorder() async {
     try {
       String path = await flutterSound.startRecorder(null, bitRate: 64000);
@@ -102,10 +183,15 @@ class audiodemoState extends State<audiodemo>
             e.currentPosition.toInt(),
             isUtc: true);
         String txt = DateFormat('mm:ss:SS', 'en_GB').format(date);
-        this._recorderTxt1 = txt.substring(3, 8);
+        //this._recorderTxt1 = txt.substring(3, 8);
         this.setState(() {
-          this._recorderTxt = txt.substring(0, 8);
+          this._recorderTxt = txt.substring(3, 8);
+          _recordint = toRecordInt(txt.substring(0, 8));
         });
+
+        if (_recordint == 59) {
+          this.delayStopRecorder(500);
+        }
       });
       _dbPeakSubscription =
           flutterSound.onRecorderDbPeakChanged.listen((value) {
@@ -145,6 +231,13 @@ class audiodemoState extends State<audiodemo>
     }
   }
 
+  //延时处理用户快速点击引发录音bug
+  void delayStopRecorder(int delaytime) async {
+    await Future.delayed(
+        Duration(milliseconds: delaytime), () => this.stopRecorder());
+  }
+
+  //开始播放
   void startPlayer() async {
     String path = await flutterSound.startPlayer(null);
     await flutterSound.setVolume(1.0);
@@ -171,6 +264,7 @@ class audiodemoState extends State<audiodemo>
     }
   }
 
+  //停止播放
   void stopPlayer() async {
     try {
       String result = await flutterSound.stopPlayer();
@@ -191,18 +285,12 @@ class audiodemoState extends State<audiodemo>
   @override
   void dispose() {
     // TODO: implement dispose
+    controller.dispose();
     super.dispose();
   }
 
   Future<bool> onBackPress() async {
-    if (draweroff == false) {
-      setState(() {
-        draweroff = true;
-      });
-    } else {
-      Navigator.pop(context);
-    }
-
+    Navigator.pop(context);
     //return Future.value(true);
   }
 
@@ -219,8 +307,8 @@ class audiodemoState extends State<audiodemo>
               buildInput(),
             ]),
             Positioned(
-              left: 30,
-              bottom: 120,
+              left: 28,
+              bottom: 112,
               width: 40,
               height: 40,
               child: Offstage(
@@ -229,11 +317,13 @@ class audiodemoState extends State<audiodemo>
                     borderRadius: BorderRadius.all(Radius.circular(20.0)),
                     child: InkWell(
                       radius: 20,
-                      onTap: () {
+                      onTap: () async {
                         print('取消发送');
-                        this.stopRecorder();
+                        await this.stopRecorder();
                         setState(() {
                           audioff = true;
+                          controller.stop();
+                          controller.reverse();
                         });
                       },
                       child: Container(
@@ -243,7 +333,7 @@ class audiodemoState extends State<audiodemo>
                         child: Center(
                           child: Icon(
                             Icons.replay,
-                            size: 23,
+                            size: 22,
                             color: Colors.black38,
                           ),
                         ),
@@ -252,7 +342,7 @@ class audiodemoState extends State<audiodemo>
               ),
             ),
             Positioned(
-                left: 115,
+                left: 125,
                 bottom: 0,
                 right: 0,
                 height: 50,
@@ -260,10 +350,11 @@ class audiodemoState extends State<audiodemo>
                   offstage: audioff,
                   child: InkWell(
                     onTap: () {
-                      print('移动手指');
-                      this.stopRecorder();
+                      // await this.stopRecorder();
                       setState(() {
                         audioff = true;
+                        controller.stop();
+                        controller.reverse();
                       });
                       sendAudio();
                     },
@@ -277,44 +368,59 @@ class audiodemoState extends State<audiodemo>
                       ),
                       child: Center(
                         child: Text(
-                          '移动手指锁住-->$_recorderTxt',
-                          style: TextStyle(color: Colors.black38, fontSize: 15),
+                          '移动手指锁住-->  $_recorderTxt',
+                          style: TextStyle(color: Colors.black38, fontSize: 17),
                         ),
                       ),
                     ),
                   ),
                 )),
             GestureDetector(
-              onTap: () {
-                this.stopRecorder();
-                setState(() {
-                  audioff = true;
-                });
-              },
               onTapDown: (T) {
-                RenderBox renderBox =
-                    anchorKey.currentContext.findRenderObject();
-                offset =
-                    renderBox.localToGlobal(Offset(0.0, renderBox.size.height));
-                print(offset.dx);
-                print(offset.dy);
-                this.startRecorder();
-                setState(() {
-                  audioff = false;
-                });
+                if (audioff) {
+                  this.ontapdelay();
+                } else {
+                  setState(() {
+                    audioff = true;
+                  });
+                  sendAudio();
+                }
               },
               onTapUp: (T) {
-                this.stopRecorder();
-                setState(() {
-                  audioff = true;
-                });
-                sendAudio();
+                if (_isRecording) {
+                  if (audioff == false) {
+                    int nowTime = new DateTime.now().millisecondsSinceEpoch;
+                    setState(() {
+                      audioff = true;
+                      controller.stop();
+                      controller.reverse();
+                    });
+                    if (nowTime - _lastClickTime > 500) {
+                      sendAudio();
+                    } else {
+                      this.delayStopRecorder(500);
+                    }
+                  }
+                }
               },
-              child: CircleAvatar(
-                radius: audioff ? 25 : 50,
-                backgroundColor: audioff ? Colors.white : Color(0x306b6aba),
-                child: Icon(Icons.mic, size: 30.0, color: Color(0xFF6b6aba)),
-              ),
+              child: audioff
+                  ? CircleAvatar(
+                      radius: 24,
+                      backgroundColor: Colors.white,
+                      child:
+                          Icon(Icons.mic, size: 30.0, color: Color(0xFF6b6aba)),
+                    )
+                  : AnimatedBuilder(
+                      animation: animationAudio,
+                      builder: (_, child) {
+                        return CircleAvatar(
+                          radius: 24 * (1 + animationAudio.value),
+                          backgroundColor: Color(0x306b6aba),
+                          child: Icon(Icons.mic,
+                              size: 32.0, color: Color(0xFF6b6aba)),
+                        );
+                      },
+                    ),
             ),
           ]),
     );
@@ -443,6 +549,13 @@ class audiodemoState extends State<audiodemo>
         );
         break;
       case -2:
+        double Length = 0;
+        if (detail['content'] > 11) {
+          Length = 180;
+        } else {
+          Length = 90 * (1 + detail['content'] / 11);
+        }
+
         return Padding(
           padding: const EdgeInsets.only(right: 0),
           child: Container(
@@ -455,7 +568,13 @@ class audiodemoState extends State<audiodemo>
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.center,
               children: <Widget>[
-                Text('${detail['content']}"'),
+                Text(
+                  '${detail['content']}" ',
+                  style: TextStyle(
+                      fontSize: 15,
+                      color: Colors.black38,
+                      fontWeight: FontWeight.w700),
+                ),
                 ClipRRect(
                   borderRadius: BorderRadius.circular(16.0),
                   child: InkWell(
@@ -463,21 +582,19 @@ class audiodemoState extends State<audiodemo>
                     onTap: () async {
                       if (_isPlaying) {
                         await stopPlayer();
-                        _isPlaying = false;
                         startPlayer();
                       } else {
                         startPlayer();
-                        _isPlaying = true;
                       }
                     },
                     child: Container(
-                      height: 44,
-                      width: 180,
+                      height: 42,
+                      width: Length,
                       alignment: Alignment.centerRight,
                       color: Colors.black12,
                       child: Text(
                         '           )))·    ',
-                        style: TextStyle(fontSize: 16),
+                        style: TextStyle(fontSize: 13, color: Colors.black38),
                       ),
                     ),
                   ),
