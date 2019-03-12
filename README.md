@@ -4,7 +4,7 @@ A new Flutter Audiochat application.
 
 ## Application screenshot
 
-![image](https://raw.githubusercontent.com/verysi/Flutter_audiochat/master/assets/images/Screenrecorder.gif)
+![image](https://raw.githubusercontent.com/verysi/Flutter_audiochat/master/assets/images/Screenrecorder20190312.gif)
 
 ## Getting Started
 
